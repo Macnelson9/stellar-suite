@@ -2,9 +2,14 @@ import * as vscode from 'vscode';
 import { simulateTransaction } from './commands/simulateTransaction';
 import { deployContract } from './commands/deployContract';
 import { buildContract } from './commands/buildContract';
+import { registerSyncCommands } from './commands/syncCommands';
 import { SidebarViewProvider } from './ui/sidebarView';
+import { WorkspaceStateSyncService } from './services/workspaceStateSyncService';
+import { SyncStatusProvider } from './ui/syncStatusProvider';
 
 let sidebarProvider: SidebarViewProvider | undefined;
+let syncService: WorkspaceStateSyncService | undefined;
+let syncStatusProvider: SyncStatusProvider | undefined;
 
 export function activate(context: vscode.ExtensionContext) {
     const outputChannel = vscode.window.createOutputChannel('Stellar Suite');
@@ -12,6 +17,11 @@ export function activate(context: vscode.ExtensionContext) {
     console.log('[Stellar Suite] Extension activating...');
 
     try {
+        // Initialize workspace state synchronization
+        syncService = new WorkspaceStateSyncService(context);
+        syncStatusProvider = new SyncStatusProvider(syncService);
+        outputChannel.appendLine('[Extension] Workspace state sync service initialized');
+
         sidebarProvider = new SidebarViewProvider(context.extensionUri, context);
         context.subscriptions.push(
             vscode.window.registerWebviewViewProvider(SidebarViewProvider.viewType, sidebarProvider)
@@ -65,6 +75,12 @@ export function activate(context: vscode.ExtensionContext) {
         }
     );
 
+    // Register sync commands
+    if (syncService) {
+        registerSyncCommands(context, syncService);
+        outputChannel.appendLine('[Extension] Workspace sync commands registered');
+    }
+
     outputChannel.appendLine('[Extension] All commands registered');
     console.log('[Stellar Suite] All commands registered');
 
@@ -98,7 +114,8 @@ export function activate(context: vscode.ExtensionContext) {
         deployFromSidebarCommand,
         simulateFromSidebarCommand,
         buildCommand,
-        watcher
+        watcher,
+        syncStatusProvider || { dispose: () => {} }
     );
 
     outputChannel.appendLine('[Extension] Extension activation complete');
@@ -115,4 +132,5 @@ export function activate(context: vscode.ExtensionContext) {
 }
 
 export function deactivate() {
+    syncStatusProvider?.dispose();
 }
