@@ -13,6 +13,7 @@ import { registerSimulationHistoryCommands } from "./commands/simulationHistoryC
 import { registerBackupCommands } from "./commands/backupCommands";
 import { registerReplayCommands } from "./commands/replayCommands";
 import { registerResourceProfilingCommands } from "./commands/resourceProfilingCommands";
+import { registerRpcAuthCommands } from "./commands/rpcAuthCommands";
 import { registerEnvVariableCommands } from "./commands/envVariableCommands";
 import { registerRetryCommands } from "./commands/retryCommands";
 import { registerRpcLoggingCommands } from "./commands/rpcLoggingCommands";
@@ -29,6 +30,8 @@ import { CompilationStatusMonitor } from "./services/compilationStatusMonitor";
 import { StateBackupService } from "./services/stateBackupService";
 import { SimulationReplayService } from "./services/simulationReplayService";
 import { ResourceProfilingService } from "./services/resourceProfilingService";
+import { createRpcAuthService } from "./services/rpcAuthVscode";
+import { RpcAuthService } from "./services/rpcAuthService";
 import { createEnvVariableService } from "./services/envVariableVscode";
 import { EnvVariableService } from "./services/envVariableService";
 import { RpcFallbackService } from "./services/rpcFallbackService";
@@ -59,6 +62,7 @@ let compilationStatusProvider: CompilationStatusProvider | undefined;
 let backupService: StateBackupService | undefined;
 let replayService: SimulationReplayService | undefined;
 let resourceProfilingService: ResourceProfilingService | undefined;
+let rpcAuthService: RpcAuthService | undefined;
 let envVariableService: EnvVariableService | undefined;
 let fallbackService: RpcFallbackService | undefined;
 let retryService: RpcRetryService | undefined;
@@ -185,6 +189,64 @@ export function activate(context: vscode.ExtensionContext) {
 
         replayService = new SimulationReplayService(simulationHistoryService!, outputChannel);
 
+    resourceProfilingService = new ResourceProfilingService(
+      context,
+      outputChannel,
+    );
+    registerResourceProfilingCommands(context, resourceProfilingService);
+    outputChannel.appendLine(
+      "[Extension] Resource profiling service initialized and commands registered",
+    );
+
+    // ── RPC Authentication ──────────────────────────────────
+    rpcAuthService = createRpcAuthService(context);
+    const updateRpcAuthHeaders = async () => {
+      if (!rpcAuthService || !rpcService) return;
+      const headers = await rpcAuthService.getAuthHeaders();
+      rpcService.setAuthHeaders(headers);
+    };
+    // Initialize headers on startup
+    updateRpcAuthHeaders().catch(err => {
+      outputChannel.appendLine(`[Error] Failed to initialize RPC Auth: ${err}`);
+    });
+    registerRpcAuthCommands(context, rpcAuthService, updateRpcAuthHeaders);
+    outputChannel.appendLine("[Extension] RPC Auth service initialized and commands registered");
+
+    outputChannel.appendLine("[Extension] All commands registered");
+
+
+    // ── Watchers ─────────────────────────────────────────────
+    const watcher = vscode.workspace.createFileSystemWatcher('**/{Cargo.toml,*.wasm}');
+    const refreshOnChange = () => sidebarProvider?.refresh();
+    watcher.onDidChange(refreshOnChange);
+    watcher.onDidCreate(refreshOnChange);
+    watcher.onDidDelete(refreshOnChange);
+
+    context.subscriptions.push(
+      simulateCommand,
+      deployCommand,
+      buildCommand,
+      configureCliCommand,
+      refreshCommand,
+      deployFromSidebarCommand,
+      simulateFromSidebarCommand,
+      copyContractIdCommand,
+      showVersionMismatchesCommand,
+      showCompilationStatusCommand,
+      watcher,
+      { dispose: () => metadataService?.dispose() },
+      syncStatusProvider,
+      healthStatusBar ?? new vscode.Disposable(() => { }),
+      healthMonitor ?? new vscode.Disposable(() => { }),
+    );
+
+    outputChannel.appendLine('[Extension] Extension activation complete');
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    outputChannel.appendLine(`[Extension] ERROR during activation: ${errorMsg}`);
+    if (error instanceof Error && error.stack) {
+      outputChannel.appendLine(`[Extension] Stack: ${error.stack}`);
+    }
         // 7. Register Commands
         const simulateCommand = vscode.commands.registerCommand(
             "stellarSuite.simulateTransaction",
